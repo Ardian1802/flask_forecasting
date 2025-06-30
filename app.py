@@ -5,14 +5,15 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 import math
-import logging 
+import logging
 
 logging.basicConfig(level=logging.ERROR)
 
 app = Flask(__name__)
 
-@app.route('/predict', methods=['POST']) 
+@app.route('/predict', methods=['POST'])
 def predict():
     try:
         data = request.json.get('data')
@@ -21,7 +22,6 @@ def predict():
 
         df_historis = pd.DataFrame(data)
 
-        # Validasi kolom yang diperlukan
         required_columns = ['record_date', 'afdeling1', 'afdeling2', 'afdeling3', 'fertilizer_usage', 'rainfall', 'infection_level']
         if not all(col in df_historis.columns for col in required_columns):
             return jsonify({'error': f'Data tidak memiliki kolom yang diperlukan: {required_columns}'}), 400
@@ -58,8 +58,14 @@ def predict():
             batch_size=32,
             validation_split=0.2,
             callbacks=[early_stopping, checkpoint],
-            verbose=1
+            verbose=0
         )
+
+        # Evaluasi model
+        y_pred_train = model.predict(X_train, verbose=0)
+        mse = mean_squared_error(y_train, y_pred_train)
+        rmse = math.sqrt(mse)
+        mae = mean_absolute_error(y_train, y_pred_train)
 
         # Prediksi 30 hari ke depan
         last_sequence = scaled_data[-30:]
@@ -67,7 +73,6 @@ def predict():
         for _ in range(30):
             prediction = model.predict(np.array([last_sequence]), verbose=0)
             future_predictions.append(prediction[0])
-
             prediction_with_dummy = np.zeros(last_sequence.shape[1])
             prediction_with_dummy[:3] = prediction[0]
             last_sequence = np.append(last_sequence[1:], [prediction_with_dummy], axis=0)
@@ -80,16 +85,52 @@ def predict():
         start_date = pd.to_datetime(df_historis['record_date'].iloc[-1]) + pd.Timedelta(days=1)
         prediction_dates = pd.date_range(start=start_date, periods=30)
 
-        result = []
+        # Hasil prediksi harian
+        predictions = []
         for i in range(30):
-            result.append({
+            predictions.append({
                 'prediction_date': str(prediction_dates[i].date()),
                 'afdeling1': float(future_predictions[i, 0]),
                 'afdeling2': float(future_predictions[i, 1]),
                 'afdeling3': float(future_predictions[i, 2])
             })
 
-        return jsonify(result), 200
+        # Evaluasi
+        evaluation = {
+            'mse': mse,
+            'rmse': rmse,
+            'mae': mae,
+            'notes': (
+                "Model memiliki performa sangat baik." if mse < 0.01 else
+                "Model memiliki performa baik." if mse < 0.05 else
+                "Model memiliki performa cukup baik." if mse < 0.1 else
+                "Model perlu ditingkatkan."
+            )
+        }
+
+        # Rekomendasi (misal: jika prediksi hari pertama < target)
+        target_produksi = 5000
+        rekomendasi = []
+        afd_names = ['afdeling1', 'afdeling2', 'afdeling3']
+        rekomendasi_text = [
+            "Lakukan peremajaan tanaman untuk meningkatkan produktivitas.",
+            "Optimalkan penggunaan pupuk dan irigasi untuk mempertahankan produktivitas.",
+            "Pastikan tanaman muda mendapatkan perawatan yang optimal untuk mendukung pertumbuhan."
+        ]
+        for i, afd in enumerate(afd_names):
+            if future_predictions[0, i] < target_produksi:
+                rekomendasi.append({
+                    'afdeling': afd,
+                    'prediction_date': str(prediction_dates[0].date()),
+                    'condition': 'Penurunan produksi',
+                    'recommendation': rekomendasi_text[i]
+                })
+
+        return jsonify({
+            'predictions': predictions,
+            'evaluation': evaluation,
+            'recommendations': rekomendasi
+        }), 200
 
     except Exception as e:
         logging.error("Terjadi kesalahan saat prediksi", exc_info=True)
