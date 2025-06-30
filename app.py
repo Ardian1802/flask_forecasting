@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 import math
@@ -21,10 +21,12 @@ def predict():
             return jsonify({'error': 'Data historis tidak ditemukan'}), 400
 
         df_historis = pd.DataFrame(data)
-
         required_columns = ['record_date', 'afdeling1', 'afdeling2', 'afdeling3', 'fertilizer_usage', 'rainfall', 'infection_level']
         if not all(col in df_historis.columns for col in required_columns):
             return jsonify({'error': f'Data tidak memiliki kolom yang diperlukan: {required_columns}'}), 400
+
+        if len(df_historis) < 30:
+            return jsonify({'error': 'Data historis minimal 30 baris'}), 400
 
         feature_cols = ['afdeling1', 'afdeling2', 'afdeling3', 'fertilizer_usage', 'rainfall', 'infection_level']
         df_features = df_historis[feature_cols]
@@ -39,6 +41,9 @@ def predict():
 
         X_train, y_train = np.array(X_train), np.array(y_train)
 
+        if X_train.shape[0] == 0:
+            return jsonify({'error': 'Data historis tidak cukup untuk training model'}), 400
+
         model = Sequential([
             Input(shape=(X_train.shape[1], X_train.shape[2])),
             LSTM(64, activation='relu', return_sequences=True),
@@ -49,15 +54,14 @@ def predict():
         ])
         model.compile(optimizer='adam', loss='mean_squared_error')
 
-        early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1)
-        checkpoint = ModelCheckpoint('best_model.h5', monitor='val_loss', save_best_only=True, mode='min', verbose=1)
+        early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=0)
 
         model.fit(
             X_train, y_train,
             epochs=50,
             batch_size=32,
             validation_split=0.2,
-            callbacks=[early_stopping, checkpoint],
+            callbacks=[early_stopping],
             verbose=0
         )
 
@@ -85,7 +89,6 @@ def predict():
         start_date = pd.to_datetime(df_historis['record_date'].iloc[-1]) + pd.Timedelta(days=1)
         prediction_dates = pd.date_range(start=start_date, periods=30)
 
-        # Hasil prediksi harian
         predictions = []
         for i in range(30):
             predictions.append({
@@ -95,7 +98,6 @@ def predict():
                 'afdeling3': float(future_predictions[i, 2])
             })
 
-        # Evaluasi
         evaluation = {
             'mse': mse,
             'rmse': rmse,
@@ -108,7 +110,6 @@ def predict():
             )
         }
 
-        # Rekomendasi (misal: jika prediksi hari pertama < target)
         target_produksi = 5000
         rekomendasi = []
         afd_names = ['afdeling1', 'afdeling2', 'afdeling3']
