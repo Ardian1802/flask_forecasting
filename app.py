@@ -23,7 +23,17 @@ db_config = {
     'user': os.getenv('DB_USER'),
     'password': os.getenv('DB_PASSWORD'),
     'database': os.getenv('DB_NAME')
+     'use_pure': True,  # Tambahan penting
 }
+
+@app.route('/test-db')
+def test_db():
+    try:
+        conn = mysql.connector.connect(**db_config)
+        return "✅ Koneksi ke database berhasil"
+    except Exception as e:
+        return f"❌ Gagal koneksi DB: {str(e)}"
+
 
 @app.route('/predict', methods=['POST']) 
 def predict():
