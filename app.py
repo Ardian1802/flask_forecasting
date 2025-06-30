@@ -28,6 +28,13 @@ def predict():
         if len(df_historis) < 30:
             return jsonify({'error': 'Data historis minimal 30 baris'}), 400
 
+        # Isi nilai kosong dengan 0 (atau bisa juga dengan rata-rata kolom)
+        df_historis = df_historis.fillna(0)
+
+        # Cek ulang, jika masih ada NaN, tolak request
+        if df_historis.isnull().values.any():
+            return jsonify({'error': 'Data historis mengandung nilai kosong/NaN'}), 400
+
         feature_cols = ['afdeling1', 'afdeling2', 'afdeling3', 'fertilizer_usage', 'rainfall', 'infection_level']
         df_features = df_historis[feature_cols]
 
@@ -43,6 +50,10 @@ def predict():
 
         if X_train.shape[0] == 0:
             return jsonify({'error': 'Data historis tidak cukup untuk training model'}), 400
+
+        # Cek NaN di data training
+        if np.isnan(X_train).any() or np.isnan(y_train).any():
+            return jsonify({'error': 'Data training mengandung NaN'}), 400
 
         model = Sequential([
             Input(shape=(X_train.shape[1], X_train.shape[2])),
@@ -67,6 +78,9 @@ def predict():
 
         # Evaluasi model
         y_pred_train = model.predict(X_train, verbose=0)
+        if np.isnan(y_pred_train).any():
+            return jsonify({'error': 'Hasil prediksi model mengandung NaN'}), 500
+
         mse = mean_squared_error(y_train, y_pred_train)
         rmse = math.sqrt(mse)
         mae = mean_absolute_error(y_train, y_pred_train)
@@ -76,6 +90,8 @@ def predict():
         future_predictions = []
         for _ in range(30):
             prediction = model.predict(np.array([last_sequence]), verbose=0)
+            if np.isnan(prediction).any():
+                return jsonify({'error': 'Prediksi masa depan mengandung NaN'}), 500
             future_predictions.append(prediction[0])
             prediction_with_dummy = np.zeros(last_sequence.shape[1])
             prediction_with_dummy[:3] = prediction[0]
